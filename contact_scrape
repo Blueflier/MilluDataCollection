@@ -1,0 +1,145 @@
+import re
+import pandas as pd 
+import requests, json, lxml
+from bs4 import BeautifulSoup
+from datetime import datetime
+
+names = pd.read_csv('no_email_contact_list.csv')
+names['concat_name'] = names['Name'] + ',' + names['cleaned_role']
+# print(names)
+headers = {
+    'User-agent':
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/106.0.0.0 Safari/537.36'
+}
+
+# https://requests.readthedocs.io/en/latest/user/quickstart/#passing-parameters-in-urls
+# https://stackoverflow.com/questions/64487987/how-to-scrape-all-results-from-google-search-results-pages-python-selenium-chro
+
+def create_df_results(contact_index):
+    search_string = names['concat_name'][contact_index]
+
+    params = {
+        'q': search_string,  # query 
+        'gl': 'us',          # country to search from
+        'hl': 'en'           # language
+    }
+
+    try:
+        html = requests.get("https://www.google.com/search", headers=headers, params=params, timeout=30)
+    except:
+        print(f"Google angry for contact {contact_index}")
+
+    soup = BeautifulSoup(html.text, 'lxml')
+
+    data = []
+
+    for result in soup.select('.tF2Cxc'):
+        title = result.select_one('.DKV0Md').text
+        link = result.select_one(".yuRUbf a")["href"]
+      
+        # sometimes there's no description and we need to handle this exception
+        try: 
+            snippet = result.select_one('#rso .lyLwlc').text
+        except: 
+#             snippet = "no snippet"
+            snippet = None
+
+        data.append({
+            'title': title,
+            'link': link,
+            'snippet': snippet
+        })
+
+    # Store the dictionary into a dataframe for easier access of elements
+    results = pd.DataFrame(data)
+
+    def find_email(snippet):
+        if snippet is None:
+            return []
+        else:
+            try:
+                matches = re.findall(r"[a-zA-Z0–9._%+-]+@[a-zA-Z0–9.-]+[a-zA-Z]{2,}", snippet)
+                return matches
+            except:
+                print("ERROR: Issue with REGEX")
+                return []
+
+    results['matches'] = results['snippet'].apply(find_email)
+    results['inital_string'] = search_string 
+    results['contact_index'] = contact_index
+
+    return results
+
+invalid_start = True
+
+while invalid_start:
+    print("Which index to start from?")
+    try:
+        start_index = int(input())
+    except:
+        print("Invalid input")
+        continue
+
+    if not (type(start_index) is int):
+        print("Input must be an integer")
+        print("Try again")
+        continue
+    
+    if not ((start_index >= 0) and (start_index < len(names))):
+        print(f"Start index must be between 0 and {len(names)}")
+        print("Try again")
+        continue
+    
+    invalid_start = False
+    
+
+invalid_end = True
+
+while invalid_end:
+    print("Which index to end?")
+    try:
+        end_index = int(input())
+    except:
+        print("Invalid input")
+        continue
+
+    if not ((end_index >= 0) and (start_index < len(names))):
+        print(f"Start index must be between 0 and {len(names)}")
+        print("Try again")
+        continue
+
+    if not ((end_index >= start_index)):
+        print(f"End index must be greater than start index: {start_index}")
+        print("Try again")
+        continue
+    
+    if not (type(end_index) is int):
+        print("Input must be an integer")
+        print("Try again")
+        continue
+
+    invalid_end = False
+
+
+final_df = None
+
+for i in range(start_index, end_index):
+
+    try:
+        temp_result = create_df_results(i)
+        print(f"success {i}") 
+
+    except:
+        print(f"ERROR: Something went wrong obtaining search results on index {i}")
+        break
+    
+    if (final_df is None):
+        final_df = temp_result 
+    else:
+        final_df = pd.concat([final_df, temp_result], ignore_index = True, axis = 0)
+    
+output_file_string = f"out_index_{start_index}_to_{end_index}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+
+final_df.to_csv(output_file_string)
+
+print(f"output file success, {output_file_string}")
